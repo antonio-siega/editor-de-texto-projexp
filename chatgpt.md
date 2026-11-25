@@ -16,6 +16,8 @@ As janelas internas (como editor de texto e visualização de arquivos PDF) ter�
 
 A interface deverá ser minimalista, contando com modos claro e escuro. O usuário não deverá ser sobrecarregado por funcionalidades supérfluas; o objetivo é criar uma aplicação simples, rápida e eficiente.
 
+A aplicação não terá banco de dados. As configurações (preferências, tema do aplicativo, etc) serão armazenadas em um arquivo JSON simples, enquanto os textos escritos serão salvos em um tipo de arquivo de texto a definir.
+
 # Restrições de escopo e tempo
 
 Este trabalho deverá ser realizado com um escopo realista em mente. Apenas as funcionalidades essenciais serão incluídas, e um MVP deverá estar pronto até o dia 04 de dezembro de 2026.
