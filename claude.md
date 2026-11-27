@@ -32,3 +32,7 @@ Utilize nomes DESCRITIVOS para variáveis.
 Utilize UpperCamelCase para nomes de classes.
 Utilize snake_case para nomes de funções.
 Utilize lowerCamelCase para nomes de variáveis.
+Seja curto, claro e conciso nos comentários explicativos. Não utilize emojis.
+Evite duplicação. Reaproveite lógica comum em funções ou módulos, sem forçar abstrações artificiais.
+Prefira soluções diretas e evite complexidade desnecessária.
+Reduza dependências entre módulos e priorize composição quando fizer sentido.
