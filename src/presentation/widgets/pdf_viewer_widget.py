@@ -8,7 +8,7 @@ from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QKeySequence, QShortc
 from PySide6.QtWidgets import (
     QAbstractSpinBox, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QScrollArea, QSpinBox, QToolButton, QVBoxLayout,
-    QWidget, QInputDialog, QSizePolicy,
+    QWidget, QInputDialog, QSizePolicy, QListWidget, QListWidgetItem,
 )
 
 from domain.models.pdf_document import PdfDocument
@@ -195,7 +195,41 @@ class PDFViewerWidget(QWidget):
         self.canvas.selection_completed.connect(self._on_selection_completed)
         self.canvas.point_clicked.connect(self._on_canvas_clicked)
         self.scroll_area.setWidget(self.canvas)
-        root.addWidget(self.scroll_area, 1)
+
+        # Área central: página do PDF e painel lateral de anotações.
+        content_layout = QHBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        content_layout.addWidget(self.scroll_area, 1)
+
+        self.annotations_panel = QWidget()
+        self.annotations_panel.setFixedWidth(230)
+        annotations_layout = QVBoxLayout(self.annotations_panel)
+        annotations_layout.setContentsMargins(8, 8, 8, 8)
+
+        self.annotations_title = QLabel("Anotações (0)")
+        self.annotations_title.setStyleSheet(
+            "font-weight: 600; font-size: 13px;"
+        )
+        self.annotation_list = QListWidget()
+        self.annotation_list.setStyleSheet(
+            "QListWidget { border: none; }"
+        )
+        self.annotation_list.itemClicked.connect(
+            self._on_annotation_clicked
+        )
+
+        annotations_layout.addWidget(self.annotations_title)
+        annotations_layout.addWidget(self.annotation_list, 1)
+        self.annotations_panel.setStyleSheet(
+            "background: palette(base); "
+            "border-left: 1px solid palette(mid);"
+        )
+        content_layout.addWidget(self.annotations_panel)
+
+        content_widget = QWidget()
+        content_widget.setLayout(content_layout)
+        root.addWidget(content_widget, 1)
 
         self.footer_label = QLabel("Selecione um PDF para começar a leitura.")
         self.footer_label.setStyleSheet("padding: 5px 9px; color: #64748b; font-size: 11px;")
@@ -204,6 +238,39 @@ class PDFViewerWidget(QWidget):
         save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
         save_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         save_shortcut.activated.connect(self.save_requested.emit)
+
+    def set_annotations(self, annotations: list[Annotation]) -> None:
+        """Atualiza a lista de anotações exibida no painel lateral."""
+        self._annotations = list(annotations)
+        self.annotation_list.clear()
+
+        for annotation in self._annotations:
+            page_number = annotation.page_index + 1
+
+            if annotation.kind == AnnotationKind.TEXT_NOTE:
+                description = annotation.content or "Nota sem texto"
+                icon = "📝"
+            elif annotation.kind == AnnotationKind.HIGHLIGHT:
+                description = "Destaque de texto"
+                icon = "🖍️"
+            else:
+                continue
+
+            item = QListWidgetItem(
+                f"{icon} Página {page_number} — {description}"
+            )
+            item.setData(Qt.UserRole, annotation.page_index)
+            self.annotation_list.addItem(item)
+
+        self.annotations_title.setText(
+            f"Anotações ({len(self._annotations)})"
+        )
+
+    def _on_annotation_clicked(self, item: QListWidgetItem) -> None:
+        """Navega até a página da anotação selecionada."""
+        page = item.data(Qt.UserRole)
+        if page is not None:
+            self.page_change_requested.emit(int(page))
 
     def set_document(self, document: PdfDocument) -> None:
         self._document = document
@@ -270,6 +337,9 @@ class PDFViewerWidget(QWidget):
         self._document = None
         self._geometry = None
         self._selection_rects.clear()
+        self._annotations.clear()
+        self.annotation_list.clear()
+        self.annotations_title.setText("Anotações (0)")
         self.canvas.clear_selection()
         self.canvas.clear()
         self.canvas.setText("Abra um PDF pelo explorador de arquivos.")
