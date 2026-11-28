@@ -436,18 +436,26 @@ class PDFViewerWidget(QWidget):
             self._qt_pdf_document.deleteLater()
 
         pdf_document = QPdfDocument(self)
-        pdf_document.load(str(path))
-        if pdf_document.pageCount() <= 0:
-            pdf_document.deleteLater()
-            self._qt_pdf_document = None
-            self.canvas.set_selection_context(None, self._current_page, self._scale)
-            self.show_error("Não foi possível habilitar a seleção de texto neste PDF.")
-            return
-
         self._qt_pdf_document = pdf_document
-        self.canvas.set_selection_context(
-            self._qt_pdf_document, self._current_page, self._scale
+        pdf_document.statusChanged.connect(
+            lambda _status, document=pdf_document: self._finish_text_document_load(document)
         )
+        pdf_document.load(str(path))
+        # O carregamento pode terminar imediatamente ou de forma assíncrona.
+        self._finish_text_document_load(pdf_document)
+
+    def _finish_text_document_load(self, pdf_document: QPdfDocument) -> None:
+        if pdf_document is not self._qt_pdf_document:
+            return
+        if pdf_document.pageCount() > 0:
+            self.canvas.set_selection_context(
+                pdf_document, self._current_page, self._scale
+            )
+        elif pdf_document.status() == QPdfDocument.Status.Error:
+            self.canvas.set_selection_context(None, self._current_page, self._scale)
+            self.show_error(
+                "Não foi possível habilitar a seleção de texto neste PDF."
+            )
 
     def set_page_geometry(self, geometry: PageGeometry, scale: float) -> None:
         self._geometry = geometry
