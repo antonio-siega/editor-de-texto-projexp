@@ -1,4 +1,4 @@
-"""Implementação do repositório PDF usando exclusivamente PyMuPDF (fitz)."""
+"""Implementação do repositório PDF usando exclusivamente PyMuPDF."""
 from __future__ import annotations
 
 import os
@@ -27,6 +27,10 @@ class PdfRenderError(PdfServiceError):
     pass
 
 
+class PdfTextExtractionError(PdfServiceError):
+    pass
+
+
 class PdfAnnotationError(PdfServiceError):
     pass
 
@@ -46,12 +50,12 @@ class PdfSession:
 class PyMuPdfService:
     def __init__(self) -> None:
         try:
-            import fitz  # type: ignore[import-not-found]
+            import pymupdf
         except ImportError as exc:  # pragma: no cover - depende do ambiente
             raise PdfServiceError(
                 "PyMuPDF não está instalado. Instale a dependência 'PyMuPDF'."
             ) from exc
-        self._fitz = fitz
+        self._fitz = pymupdf
 
     def open(self, path: Path) -> PdfSession:
         path = Path(path).expanduser().resolve()
@@ -135,6 +139,49 @@ class PyMuPdfService:
         except Exception as exc:
             raise PdfAnnotationError(
                 f"Não foi possível recuperar as anotações: {exc}"
+            ) from exc
+
+    def get_page_text(self, session: PdfSession, page: int) -> list[dict[str, Any]]:
+        """Extrai trechos de texto com caixas ajustadas à orientação visual da página.
+
+        As caixas retornadas estão em pontos PDF, antes da aplicação do zoom da interface.
+        """
+        try:
+            pdf_page = self._get_page(session, page)
+            text_data = pdf_page.get_text("dict")
+            text_spans: list[dict[str, Any]] = []
+
+            for block in text_data.get("blocks", []):
+                if block.get("type") != 0:
+                    continue
+
+                for line in block.get("lines", []):
+                    for span in line.get("spans", []):
+                        text = str(span.get("text", ""))
+                        if not text.strip():
+                            continue
+
+                        # O texto extraído usa coordenadas não rotacionadas.
+                        # A matriz converte a caixa para a orientação renderizada.
+                        visual_rect = self._fitz.Rect(span["bbox"]) * pdf_page.rotation_matrix
+                        text_spans.append({
+                            "text": text,
+                            "bbox": (
+                                float(visual_rect.x0),
+                                float(visual_rect.y0),
+                                float(visual_rect.x1),
+                                float(visual_rect.y1),
+                            ),
+                            "font": str(span.get("font", "")),
+                            "size": float(span.get("size", 0.0)),
+                        })
+
+            return text_spans
+        except PdfServiceError:
+            raise
+        except Exception as exc:
+            raise PdfTextExtractionError(
+                f"Não foi possível extrair o texto da página: {exc}"
             ) from exc
 
     def get_page_geometry(self, session: PdfSession, page: int) -> PageGeometry:
