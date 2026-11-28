@@ -3,8 +3,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QRect, Signal
-from PySide6.QtGui import QPixmap, QPainter, QPen, QColor, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QRect, QPointF, Signal
+from PySide6.QtGui import QPixmap, QPainter, QColor, QKeySequence, QShortcut, QPolygonF
+from PySide6.QtPdf import QPdfDocument
 from PySide6.QtWidgets import (
     QAbstractSpinBox, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QScrollArea, QSpinBox, QToolButton, QVBoxLayout,
@@ -17,66 +18,141 @@ from domain.models.pdf_geometry import PageGeometry, Rect, view_rect_to_pdf, vie
 from domain.models.annotation import Annotation, AnnotationKind
 
 class PdfPageCanvas(QLabel):
-    """Canvas com seleção retangular por arraste e captura de clique para notas."""
+    """Canvas do PDF com seleção real de texto via QtPdf."""
 
-    selection_completed = Signal(object)  # Rect em pixels do raster
-    point_clicked = Signal(object)         # Point em pixels do raster
+    selection_completed = Signal(object, str)  # retângulos PDF e texto selecionado
+    point_clicked = Signal(object)               # ponto em pixels para inserir nota
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.setAlignment(Qt.AlignCenter)
         self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.StrongFocus)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self._drag_start = None
-        self._rubber_band = None
         self.note_mode = False
+        self._pdf_document: QPdfDocument | None = None
+        self._page_index = 0
+        self._scale = 1.0
+        self._drag_start = None
+        self._selection = None
+        self._selection_polygons: list[QPolygonF] = []
 
     def set_image(self, pixmap: QPixmap) -> None:
         self.setPixmap(pixmap)
         self.resize(pixmap.size())
         self.updateGeometry()
 
+    def set_selection_context(
+        self, document: QPdfDocument | None, page: int, scale: float
+    ) -> None:
+        self._pdf_document = document
+        self._page_index = page
+        self._scale = float(scale)
+        self.clear_selection()
+
     def clear_selection(self) -> None:
-        if self._rubber_band:
-            self._rubber_band.hide()
+        self._selection = None
+        self._selection_polygons.clear()
+        self.update()
 
     def mousePressEvent(self, event) -> None:
         if event.button() == Qt.LeftButton and self.pixmap() is not None:
+            self.setFocus()
             self._drag_start = event.position().toPoint()
             if self.note_mode:
                 return
-            if self._rubber_band is None:
-                from PySide6.QtWidgets import QRubberBand
-                self._rubber_band = QRubberBand(QRubberBand.Rectangle, self)
-            self._rubber_band.setGeometry(QRect(self._drag_start, self._drag_start))
-            self._rubber_band.show()
-        super().mousePressEvent(event)
+            self.clear_selection()
+        else:
+            super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
-        if self._drag_start is not None and not self.note_mode and self._rubber_band:
-            current = event.position().toPoint()
-            self._rubber_band.setGeometry(QRect(self._drag_start, current).normalized())
-        super().mouseMoveEvent(event)
+        if (
+            self._drag_start is not None
+            and not self.note_mode
+            and self._pdf_document is not None
+            and self._scale > 0
+        ):
+            end = event.position()
+            start = QPointF(self._drag_start.x() / self._scale,
+                            self._drag_start.y() / self._scale)
+            finish = QPointF(end.x() / self._scale, end.y() / self._scale)
+            self._update_text_selection(start, finish)
+        else:
+            super().mouseMoveEvent(event)
 
     def mouseReleaseEvent(self, event) -> None:
         if event.button() == Qt.LeftButton and self._drag_start is not None:
             end = event.position().toPoint()
             start = self._drag_start
             self._drag_start = None
+
             if self.note_mode:
-                if self._rubber_band:
-                    self._rubber_band.hide()
                 self.point_clicked.emit((float(end.x()), float(end.y())))
-            else:
-                rect = QRect(start, end).normalized()
-                if rect.width() >= 4 and rect.height() >= 4:
-                    self.selection_completed.emit((
-                        float(rect.left()), float(rect.top()),
-                        float(rect.right()), float(rect.bottom()),
-                    ))
-                elif self._rubber_band:
-                    self._rubber_band.hide()
+                return
+
+            if self._pdf_document is not None and self._scale > 0:
+                start_point = QPointF(start.x() / self._scale, start.y() / self._scale)
+                end_point = QPointF(end.x() / self._scale, end.y() / self._scale)
+                selection = self._update_text_selection(start_point, end_point)
+                if selection is not None and selection.isValid():
+                    rectangles = [
+                        (
+                            float(polygon.boundingRect().x()),
+                            float(polygon.boundingRect().y()),
+                            float(polygon.boundingRect().right()),
+                            float(polygon.boundingRect().bottom()),
+                        )
+                        for polygon in selection.bounds()
+                    ]
+                    if rectangles:
+                        self.selection_completed.emit(rectangles, selection.text())
+            return
+
         super().mouseReleaseEvent(event)
+
+    def _update_text_selection(self, start: QPointF, end: QPointF):
+        if self._pdf_document is None:
+            return None
+        try:
+            selection = self._pdf_document.getSelection(
+                self._page_index, start, end
+            )
+            if not selection.isValid():
+                self.clear_selection()
+                return None
+
+            self._selection = selection
+            self._selection_polygons = [
+                QPolygonF([
+                    QPointF(point.x() * self._scale, point.y() * self._scale)
+                    for point in polygon
+                ])
+                for polygon in selection.bounds()
+            ]
+            self.update()
+            return selection
+        except (RuntimeError, TypeError, ValueError):
+            self.clear_selection()
+            return None
+
+    def keyPressEvent(self, event) -> None:
+        if event.matches(QKeySequence.Copy) and self._selection is not None:
+            if self._selection.isValid():
+                self._selection.copyToClipboard()
+                event.accept()
+                return
+        super().keyPressEvent(event)
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        if not self._selection_polygons:
+            return
+        painter = QPainter(self)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QColor(255, 215, 64, 115))
+        for polygon in self._selection_polygons:
+            painter.drawPolygon(polygon)
+        painter.end()
 
 
 class PDFViewerWidget(QWidget):
@@ -98,6 +174,7 @@ class PDFViewerWidget(QWidget):
         self._current_page = 0
         self._scale = 1.25
         self._geometry: PageGeometry | None = None
+        self._qt_pdf_document: QPdfDocument | None = None
         self._selection_rects: list[Rect] = []
         self._annotations: list[Annotation] = []
         self._build_ui()
@@ -204,7 +281,7 @@ class PDFViewerWidget(QWidget):
         self.canvas = PdfPageCanvas()
         self.canvas.setText("Abra um PDF pelo explorador de arquivos.")
         self.canvas.setStyleSheet("QLabel { background: white; color: #64748b; }")
-        self.canvas.selection_completed.connect(self._on_selection_completed)
+        self.canvas.selection_completed.connect(self._on_text_selection_completed)
         self.canvas.point_clicked.connect(self._on_canvas_clicked)
         self.scroll_area.setWidget(self.canvas)
 
@@ -349,11 +426,35 @@ class PDFViewerWidget(QWidget):
         self.zoom_spin.setValue(round(document.zoom * 100))
         self.zoom_spin.blockSignals(False)
         self._set_document_controls_enabled(True)
-        self.footer_label.setText("Arraste sobre o conteúdo para selecionar uma área e grifar.")
+        self._load_text_selection_document(document.path)
+        self.footer_label.setText("Arraste sobre o texto para selecionar e use Ctrl+C para copiar.")
+
+    def _load_text_selection_document(self, path: Path) -> None:
+        """Abre o mesmo PDF no mecanismo QtPdf, usado apenas para selecionar texto."""
+        if self._qt_pdf_document is not None:
+            self._qt_pdf_document.close()
+            self._qt_pdf_document.deleteLater()
+
+        pdf_document = QPdfDocument(self)
+        pdf_document.load(str(path))
+        if pdf_document.pageCount() <= 0:
+            pdf_document.deleteLater()
+            self._qt_pdf_document = None
+            self.canvas.set_selection_context(None, self._current_page, self._scale)
+            self.show_error("Não foi possível habilitar a seleção de texto neste PDF.")
+            return
+
+        self._qt_pdf_document = pdf_document
+        self.canvas.set_selection_context(
+            self._qt_pdf_document, self._current_page, self._scale
+        )
 
     def set_page_geometry(self, geometry: PageGeometry, scale: float) -> None:
         self._geometry = geometry
         self._scale = scale
+        self.canvas.set_selection_context(
+            self._qt_pdf_document, self._current_page, self._scale
+        )
 
     def display_page(self, page: int, image_bytes: bytes) -> None:
         pixmap = QPixmap()
@@ -361,6 +462,7 @@ class PDFViewerWidget(QWidget):
             self.show_error("Não foi possível exibir a imagem da página PDF.")
             return
         self._current_page = page
+        self.canvas.set_selection_context(self._qt_pdf_document, page, self._scale)
         self._selection_rects.clear()
         self.highlight_button.setEnabled(False)
         self.canvas.clear_selection()
@@ -369,7 +471,7 @@ class PDFViewerWidget(QWidget):
             self.page_spin.blockSignals(True)
             self.page_spin.setValue(page + 1)
             self.page_spin.blockSignals(False)
-        self.footer_label.setText(f"Página {page + 1} • Zoom {round(self._scale * 100)}%")
+        self.footer_label.setText(f"Página {page + 1} • Zoom {round(self._scale * 100)}% • Arraste para selecionar texto")
 
     def set_modified(self, modified: bool) -> None:
         if modified:
@@ -398,6 +500,11 @@ class PDFViewerWidget(QWidget):
     def clear_document(self) -> None:
         self._document = None
         self._geometry = None
+        if self._qt_pdf_document is not None:
+            self._qt_pdf_document.close()
+            self._qt_pdf_document.deleteLater()
+            self._qt_pdf_document = None
+        self.canvas.set_selection_context(None, 0, self._scale)
         self._selection_rects.clear()
         self._annotations.clear()
         self.annotation_list.clear()
@@ -439,18 +546,17 @@ class PDFViewerWidget(QWidget):
         value = max(0.5, min(3.0, self._scale + delta))
         self.zoom_spin.setValue(round(value * 100))
 
-    def _on_selection_completed(self, rect_px: Rect) -> None:
-        if not self._geometry:
-            self.show_error("A geometria da página ainda não foi carregada.")
+    def _on_text_selection_completed(self, rects_pdf, selected_text: str) -> None:
+        if not rects_pdf:
             return
-        try:
-            rect_pdf = view_rect_to_pdf(rect_px, self._scale, self._geometry)
-        except ValueError as exc:
-            self.show_error(str(exc))
-            return
-        self._selection_rects = [rect_pdf]
+        self._selection_rects = list(rects_pdf)
         self.highlight_button.setEnabled(True)
-        self.footer_label.setText("Área selecionada. Clique em 'Grifar seleção' para salvar o destaque.")
+        preview = " ".join(selected_text.split())
+        if len(preview) > 90:
+            preview = preview[:87] + "..."
+        self.footer_label.setText(
+            f"Texto selecionado: “{preview}” • Ctrl+C para copiar ou grifar seleção."
+        )
 
     def _emit_highlight(self) -> None:
         if self._selection_rects:
