@@ -139,12 +139,14 @@ class PdfIntegration:
     def _highlight(self, page, rects, color):
         try:
             self.controller.highlight(page, rects, color)
+            self.viewer.set_annotations(self.controller.get_annotations())
         except Exception as error:
             self._show_error(str(error))
 
     def _add_note(self, page, point, text):
         try:
             self.controller.add_note(page, point, text)
+            self.viewer.set_annotations(self.controller.get_annotations())
         except Exception as error:
             self._show_error(str(error))
 
