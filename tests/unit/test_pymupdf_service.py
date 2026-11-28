@@ -1,12 +1,12 @@
 from pathlib import Path
 
-import fitz
+import pymupdf
 
 from infrastructure.pdf.pymupdf_service import PyMuPdfService
 
 
 def make_pdf(path: Path) -> None:
-    document = fitz.open()
+    document = pymupdf.open()
     page = document.new_page(width=595, height=842)
     page.insert_text((72, 100), "Texto para teste de anotacao", fontsize=14)
     document.save(path)
@@ -31,7 +31,7 @@ def test_open_render_annotate_save_and_reopen(tmp_path: Path):
     service.save(session)
     service.close(session)
 
-    reopened = fitz.open(pdf_path)
+    reopened = pymupdf.open(pdf_path)
     reopened_page = reopened[0]
     annotations = list(reopened_page.annots() or [])
     annotation_types = {annotation.type[1] for annotation in annotations}
@@ -91,5 +91,27 @@ def test_get_annotations_returns_saved_annotations(tmp_path: Path):
     assert notes[0].page_index == 0
     assert notes[0].content == "Minha nota de teste"
     assert notes[0].point is not None
+
+    service.close(session)
+
+
+def test_get_page_text_returns_text_and_visual_coordinates(tmp_path: Path):
+    pdf_path = tmp_path / "texto.pdf"
+    make_pdf(pdf_path)
+
+    service = PyMuPdfService()
+    session = service.open(pdf_path)
+
+    text_spans = service.get_page_text(session, 0)
+
+    assert text_spans
+    matching_span = next(
+        span for span in text_spans if "Texto para teste" in span["text"]
+    )
+    assert matching_span["bbox"][0] >= 0
+    assert matching_span["bbox"][2] > matching_span["bbox"][0]
+    assert matching_span["bbox"][3] > matching_span["bbox"][1]
+    assert matching_span["font"]
+    assert matching_span["size"] > 0
 
     service.close(session)

@@ -74,6 +74,13 @@ class PdfController(QObject):
         page_index = self._document.current_page if page is None else page
         return self._repository.get_page_geometry(self._session, page_index)
 
+    def get_page_text(self, page: int | None = None) -> list[dict[str, object]]:
+        """Retorna os trechos de texto da página com suas coordenadas visuais."""
+        self._require_document()
+        assert self._session is not None and self._document is not None
+        page_index = self._document.current_page if page is None else page
+        return self._repository.get_page_text(self._session, page_index)
+
     def get_annotations(self) -> list[Annotation]:
         """Retorna todas as anotações do PDF aberto."""
         self._require_document()

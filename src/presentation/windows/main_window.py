@@ -83,6 +83,20 @@ class MainWindow(QMainWindow):
         viewMenu = self.menuBar().addMenu("E&xibir")
         viewMenu.addAction(self.toggleThemeAction)
 
+        self.fullScreenAction = QAction("Tela cheia", self)
+        self.fullScreenAction.setCheckable(True)
+        self.fullScreenAction.setShortcut(QKeySequence("F11"))
+        self.fullScreenAction.toggled.connect(self.toggle_full_screen)
+        viewMenu.addSeparator()
+        viewMenu.addAction(self.fullScreenAction)
+
+    def toggle_full_screen(self, enabled: bool):
+        """Alterna entre a janela normal e o modo de tela cheia."""
+        if enabled:
+            self.showFullScreen()
+        else:
+            self.showNormal()
+
     def create_action(self, text: str, shortcut=None) -> QAction:
         action = QAction(text, self)
         if shortcut is not None:
