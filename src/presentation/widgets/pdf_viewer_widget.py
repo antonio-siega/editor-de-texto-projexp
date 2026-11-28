@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QAbstractSpinBox, QDoubleSpinBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
     QMessageBox, QPushButton, QScrollArea, QSpinBox, QToolButton, QVBoxLayout,
     QWidget, QInputDialog, QSizePolicy, QListWidget, QListWidgetItem,
+    QTextBrowser, QSplitter,
 )
 
 from domain.models.pdf_document import PdfDocument
@@ -196,40 +197,61 @@ class PDFViewerWidget(QWidget):
         self.canvas.point_clicked.connect(self._on_canvas_clicked)
         self.scroll_area.setWidget(self.canvas)
 
-        # Área central: página do PDF e painel lateral de anotações.
-        content_layout = QHBoxLayout()
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(0)
-        content_layout.addWidget(self.scroll_area, 1)
+        # Área central redimensionável: página do PDF e anotações.
+        self.content_splitter = QSplitter(Qt.Horizontal)
+        self.content_splitter.setChildrenCollapsible(False)
+        self.content_splitter.addWidget(self.scroll_area)
+        self.content_splitter.setStretchFactor(0, 1)
 
         self.annotations_panel = QWidget()
-        self.annotations_panel.setFixedWidth(230)
+        self.annotations_panel.setMinimumWidth(240)
         annotations_layout = QVBoxLayout(self.annotations_panel)
-        annotations_layout.setContentsMargins(8, 8, 8, 8)
+        annotations_layout.setContentsMargins(10, 8, 10, 8)
+        annotations_layout.setSpacing(8)
 
         self.annotations_title = QLabel("Anotações (0)")
         self.annotations_title.setStyleSheet(
             "font-weight: 600; font-size: 13px;"
         )
         self.annotation_list = QListWidget()
+        self.annotation_list.setWordWrap(True)
+        self.annotation_list.setSpacing(3)
         self.annotation_list.setStyleSheet(
             "QListWidget { border: none; }"
+            "QListWidget::item { padding: 7px; }"
+            "QListWidget::item:selected { background: palette(highlight); "
+            "color: palette(highlighted-text); }"
         )
         self.annotation_list.itemClicked.connect(
             self._on_annotation_clicked
         )
 
+        self.annotation_detail_title = QLabel("Conteúdo da anotação")
+        self.annotation_detail_title.setStyleSheet(
+            "font-weight: 600; font-size: 12px; margin-top: 6px;"
+        )
+        self.annotation_detail = QTextBrowser()
+        self.annotation_detail.setOpenExternalLinks(False)
+        self.annotation_detail.setPlaceholderText(
+            "Selecione uma anotação para visualizar seu conteúdo."
+        )
+        self.annotation_detail.setPlainText(
+            "Selecione uma anotação na lista acima."
+        )
+
         annotations_layout.addWidget(self.annotations_title)
-        annotations_layout.addWidget(self.annotation_list, 1)
+        annotations_layout.addWidget(self.annotation_list, 2)
+        annotations_layout.addWidget(self.annotation_detail_title)
+        annotations_layout.addWidget(self.annotation_detail, 3)
         self.annotations_panel.setStyleSheet(
             "background: palette(base); "
             "border-left: 1px solid palette(mid);"
         )
-        content_layout.addWidget(self.annotations_panel)
+        self.content_splitter.addWidget(self.annotations_panel)
+        self.content_splitter.setStretchFactor(1, 0)
+        self.content_splitter.setSizes([780, 300])
 
-        content_widget = QWidget()
-        content_widget.setLayout(content_layout)
-        root.addWidget(content_widget, 1)
+        root.addWidget(self.content_splitter, 1)
 
         self.footer_label = QLabel("Selecione um PDF para começar a leitura.")
         self.footer_label.setStyleSheet("padding: 5px 9px; color: #64748b; font-size: 11px;")
@@ -240,37 +262,53 @@ class PDFViewerWidget(QWidget):
         save_shortcut.activated.connect(self.save_requested.emit)
 
     def set_annotations(self, annotations: list[Annotation]) -> None:
-        """Atualiza a lista de anotações exibida no painel lateral."""
+        """Atualiza a lista lateral sem perder o conteúdo completo das notas."""
         self._annotations = list(annotations)
         self.annotation_list.clear()
+        self.annotation_detail.setPlainText(
+            "Selecione uma anotação na lista acima."
+        )
 
-        for annotation in self._annotations:
+        for index, annotation in enumerate(self._annotations):
             page_number = annotation.page_index + 1
 
             if annotation.kind == AnnotationKind.TEXT_NOTE:
-                description = annotation.content or "Nota sem texto"
-                icon = "📝"
+                label = f"📝 Nota — Página {page_number}"
             elif annotation.kind == AnnotationKind.HIGHLIGHT:
-                description = "Destaque de texto"
-                icon = "🖍️"
+                label = f"🖍️ Destaque — Página {page_number}"
             else:
                 continue
 
-            item = QListWidgetItem(
-                f"{icon} Página {page_number} — {description}"
-            )
-            item.setData(Qt.UserRole, annotation.page_index)
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, index)
+            if annotation.content:
+                item.setToolTip(annotation.content)
             self.annotation_list.addItem(item)
 
         self.annotations_title.setText(
-            f"Anotações ({len(self._annotations)})"
+            f"Anotações ({self.annotation_list.count()})"
         )
 
     def _on_annotation_clicked(self, item: QListWidgetItem) -> None:
-        """Navega até a página da anotação selecionada."""
-        page = item.data(Qt.UserRole)
-        if page is not None:
-            self.page_change_requested.emit(int(page))
+        """Exibe o conteúdo completo e navega até a página da anotação."""
+        index = item.data(Qt.UserRole)
+        if index is None or not (0 <= int(index) < len(self._annotations)):
+            return
+
+        annotation = self._annotations[int(index)]
+        if annotation.kind == AnnotationKind.TEXT_NOTE:
+            self.annotation_detail.setPlainText(
+                annotation.content or "Esta nota não possui texto."
+            )
+            self.annotation_detail_title.setText("Texto da nota")
+        elif annotation.kind == AnnotationKind.HIGHLIGHT:
+            self.annotation_detail.setPlainText(
+                "Destaque de texto\n"
+                f"Página {annotation.page_index + 1}"
+            )
+            self.annotation_detail_title.setText("Detalhes do destaque")
+
+        self.page_change_requested.emit(annotation.page_index)
 
     def set_document(self, document: PdfDocument) -> None:
         self._document = document
@@ -340,6 +378,9 @@ class PDFViewerWidget(QWidget):
         self._annotations.clear()
         self.annotation_list.clear()
         self.annotations_title.setText("Anotações (0)")
+        self.annotation_detail.setPlainText(
+            "Selecione uma anotação na lista acima."
+        )
         self.canvas.clear_selection()
         self.canvas.clear()
         self.canvas.setText("Abra um PDF pelo explorador de arquivos.")
