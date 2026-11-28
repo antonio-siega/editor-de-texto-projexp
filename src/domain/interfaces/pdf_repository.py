@@ -22,6 +22,10 @@ class PdfRepository(Protocol):
     def get_page_geometry(self, session: Any, page: int) -> PageGeometry:
         ...
 
+    def get_page_text(self, session: Any, page: int) -> list[dict[str, Any]]:
+        """Retorna trechos de texto e suas caixas em coordenadas da página exibida."""
+        ...
+
     def render_page(self, session: Any, page: int, scale: float) -> bytes:
         """Renderiza a página como bytes PNG, sem depender de Qt."""
         ...
