@@ -169,6 +169,16 @@ class PDFViewerWidget(QWidget):
         self.note_button.setToolTip("Ative e clique no PDF para inserir um comentário")
         self.note_button.toggled.connect(self._set_note_mode)
 
+        self.annotations_toggle_button = QToolButton()
+        self.annotations_toggle_button.setText("Anotações")
+        self.annotations_toggle_button.setCheckable(True)
+        self.annotations_toggle_button.setToolTip(
+            "Mostrar ou ocultar o painel de anotações"
+        )
+        self.annotations_toggle_button.toggled.connect(
+            self._toggle_annotations_panel
+        )
+
         tools.addWidget(self.previous_button)
         tools.addWidget(self.page_spin)
         tools.addWidget(self.page_total_label)
@@ -180,6 +190,7 @@ class PDFViewerWidget(QWidget):
         tools.addStretch(1)
         tools.addWidget(self.highlight_button)
         tools.addWidget(self.note_button)
+        tools.addWidget(self.annotations_toggle_button)
         toolbar = QWidget()
         toolbar.setLayout(tools)
         toolbar.setStyleSheet("padding: 5px 8px; border-bottom: 1px solid palette(mid);")
@@ -250,6 +261,7 @@ class PDFViewerWidget(QWidget):
         self.content_splitter.addWidget(self.annotations_panel)
         self.content_splitter.setStretchFactor(1, 0)
         self.content_splitter.setSizes([780, 300])
+        self.annotations_panel.hide()
 
         root.addWidget(self.content_splitter, 1)
 
@@ -260,6 +272,18 @@ class PDFViewerWidget(QWidget):
         save_shortcut = QShortcut(QKeySequence("Ctrl+S"), self)
         save_shortcut.setContext(Qt.WidgetWithChildrenShortcut)
         save_shortcut.activated.connect(self.save_requested.emit)
+
+    def _toggle_annotations_panel(self, visible: bool) -> None:
+        """Mostra ou recolhe o painel lateral de anotações."""
+        if visible:
+            self.annotations_panel.show()
+            total_width = max(600, self.content_splitter.width())
+            self.content_splitter.setSizes([
+                max(300, total_width - 300),
+                300,
+            ])
+        else:
+            self.annotations_panel.hide()
 
     def set_annotations(self, annotations: list[Annotation]) -> None:
         """Atualiza a lista lateral sem perder o conteúdo completo das notas."""
@@ -395,7 +419,8 @@ class PDFViewerWidget(QWidget):
         for widget in (
             self.save_button, self.previous_button, self.page_spin, self.next_button,
             self.zoom_out_button, self.zoom_spin, self.zoom_in_button,
-            self.highlight_button, self.note_button, self.close_button,
+            self.highlight_button, self.note_button,
+            self.annotations_toggle_button, self.close_button,
         ):
             widget.setEnabled(enabled)
 
